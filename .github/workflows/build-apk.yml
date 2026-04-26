@@ -36,13 +36,29 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
-      - name: Patch deprecated jcenter() in node_modules
+      - name: Patch deprecated Gradle APIs in node_modules
         run: |
-          echo "Patching react-native-sqlite-storage to remove jcenter()..."
+          echo "=== Patching jcenter() -> mavenCentral() ==="
           find node_modules -name "build.gradle" -exec grep -l "jcenter()" {} \; | while read f; do
-            echo "  Patching: $f"
+            echo "  Patching jcenter: $f"
             sed -i 's/jcenter()/mavenCentral()/g' "$f"
           done
+
+          echo "=== Patching lintOptions -> lint ==="
+          find node_modules -name "build.gradle" -exec grep -l "lintOptions" {} \; | while read f; do
+            echo "  Patching lintOptions: $f"
+            sed -i 's/lintOptions/lint/g' "$f"
+          done
+
+          echo "=== Patching compile -> implementation in old dependencies ==="
+          # Some old libraries use 'compile' instead of 'implementation'
+          find node_modules -name "build.gradle" | while read f; do
+            if grep -q "^\s*compile " "$f" 2>/dev/null; then
+              echo "  Patching compile->implementation: $f"
+              sed -i 's/^\(\s*\)compile /\1implementation /g' "$f"
+            fi
+          done
+
           echo "Patch complete."
 
       - name: Setup Java 17
@@ -79,26 +95,45 @@ jobs:
       - name: Build Release APK (arm64 only for speed)
         working-directory: android
         run: |
+          set +e
           ./gradlew assembleRelease \
             -PreactNativeArchitectures=arm64-v8a \
             --no-daemon \
             --max-workers=2 \
             --console=plain \
-            --stacktrace 2>&1 | tee build_output.log; EXIT_CODE=${PIPESTATUS[0]}
+            --info 2>&1 | tee /tmp/build_output.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+
           if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo "=========================================="
-            echo "  BUILD FAILED - Error Summary"
+            echo "  BUILD FAILED - Full Error Details"
             echo "=========================================="
             echo ""
-            grep -A 5 "FAILURE\|ERROR\|error:\|What went wrong\|Exception is" build_output.log || true
+            # Show the FAILURE block
+            grep -B 2 -A 20 "FAILURE: Build failed" /tmp/build_output.log || true
             echo ""
             echo "=========================================="
-            echo "  Last 80 lines of build output:"
+            echo "  Failed Tasks:"
             echo "=========================================="
-            tail -80 build_output.log
+            grep -i "FAILED$\|execution failed for task" /tmp/build_output.log || true
+            echo ""
+            echo "=========================================="
+            echo "  Last 100 lines:"
+            echo "=========================================="
+            tail -100 /tmp/build_output.log
             exit 1
           fi
+
+      # Always upload build log if build fails
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-failure-log
+          path: /tmp/build_output.log
+          retention-days: 7
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
