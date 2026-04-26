@@ -7,6 +7,10 @@ on:
     branches: [main, master]
   workflow_dispatch: # Allow manual trigger
 
+# Force Node.js 24 to avoid deprecation warnings
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 # Cancel any in-progress runs for the same branch to avoid queue buildup
 concurrency:
   group: build-apk-${{ github.ref }}
@@ -16,13 +20,13 @@ jobs:
   build:
     name: Build Release APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30 # Kill stuck builds early
+    timeout-minutes: 45
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -39,6 +43,16 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager --install \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;27.1.12297006"
+
       - name: Cache Gradle wrapper & build
         uses: actions/cache@v4
         with:
@@ -46,8 +60,6 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             android/.gradle
-            android/build
-            android/app/build
           key: gradle-${{ runner.os }}-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties', 'android/build.gradle', 'android/app/build.gradle') }}
           restore-keys: |
             gradle-${{ runner.os }}-
@@ -63,12 +75,12 @@ jobs:
             --no-daemon \
             --max-workers=2 \
             --console=plain \
-            -Dorg.gradle.logging.level=warn
+            --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: DailyDisciplineTracker-release
           path: android/app/build/outputs/apk/release/*.apk
-          retention-days: 14
+          retention-days: 30
           if-no-files-found: error
