@@ -36,6 +36,15 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
+      - name: Patch deprecated jcenter() in node_modules
+        run: |
+          echo "Patching react-native-sqlite-storage to remove jcenter()..."
+          find node_modules -name "build.gradle" -exec grep -l "jcenter()" {} \; | while read f; do
+            echo "  Patching: $f"
+            sed -i 's/jcenter()/mavenCentral()/g' "$f"
+          done
+          echo "Patch complete."
+
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
