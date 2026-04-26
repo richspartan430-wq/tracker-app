@@ -79,66 +79,77 @@ jobs:
         continue-on-error: true
         working-directory: android
         shell: bash
+        env:
+          BUILD_LOG: ${{ github.workspace }}/full_build.log
         run: |
           set -o pipefail
+          rm -f "$BUILD_LOG"
           ./gradlew assembleRelease \
             -PreactNativeArchitectures=arm64-v8a \
             --no-daemon \
             --max-workers=2 \
             --console=plain \
-            --stacktrace 2>&1 | tee /tmp/full_build.log
+            --stacktrace 2>&1 | tee "$BUILD_LOG"
 
       - name: Extract error details on failure
         if: steps.build.outcome == 'failure'
         shell: bash
+        env:
+          BUILD_LOG: ${{ github.workspace }}/full_build.log
         run: |
           set +e
-          LOG_FILE="/tmp/full_build.log"
+          set +o pipefail
+          LOG_FILE="$BUILD_LOG"
 
-          echo "##[group]FAILURE DETAILS"
-          echo ""
+          echo "===== FAILURE DETAILS ====="
+          echo
 
           if [ ! -f "$LOG_FILE" ]; then
             echo "Build log not found at $LOG_FILE"
-            echo ""
+            echo
             echo "===== /tmp DIRECTORY SNAPSHOT ====="
-            ls -lah /tmp | head -100
+            ls -lah /tmp | head -100 || true
           else
             echo "Build log: $LOG_FILE"
-            echo "Log lines: $(wc -l < \"$LOG_FILE\")"
-            echo ""
+            wc -l "$LOG_FILE" || true
+            echo
 
             echo "===== FAILED TASKS ====="
             grep -E "FAILED$|^> Task .* FAILED$" "$LOG_FILE" || echo "No FAILED tasks found"
-            echo ""
+            echo
 
             echo "===== WHAT WENT WRONG ====="
             sed -n '/What went wrong/,/Try:/p' "$LOG_FILE" || echo "No 'What went wrong' section found"
-            echo ""
+            echo
 
             echo "===== ERRORS ====="
             grep -i "error:" "$LOG_FILE" | grep -v "Caching disabled" | head -30 || echo "No error: lines found"
-            echo ""
+            echo
 
             echo "===== FAILURE BLOCK ====="
             grep -B 2 -A 30 "FAILURE: Build failed" "$LOG_FILE" || echo "No FAILURE block found"
-            echo ""
+            echo
 
-            echo "===== LAST 120 LINES ====="
-            tail -120 "$LOG_FILE" || echo "Unable to tail build log"
+            echo "===== LAST 200 LINES ====="
+            tail -200 "$LOG_FILE" || echo "Unable to tail build log"
           fi
-
-          echo "##[endgroup]"
-          exit 1
 
       - name: Upload build log artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-failure-log
-          path: /tmp/full_build.log
+          path: |
+            ${{ github.workspace }}/full_build.log
+            /tmp/full_build.log
           retention-days: 7
           if-no-files-found: warn
+
+      - name: Mark workflow failed if build failed
+        if: steps.build.outcome == 'failure'
+        run: |
+          echo "Gradle build failed. See failure details above and the build-failure-log artifact."
+          exit 1
 
       - name: Upload APK artifact
         if: steps.build.outcome == 'success'
