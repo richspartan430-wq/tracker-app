@@ -90,33 +90,55 @@ jobs:
 
       - name: Extract error details on failure
         if: steps.build.outcome == 'failure'
+        shell: bash
         run: |
+          set +e
+          LOG_FILE="/tmp/full_build.log"
+
           echo "##[group]FAILURE DETAILS"
           echo ""
-          echo "===== FAILED TASKS ====="
-          grep "FAILED$" /tmp/full_build.log || echo "No FAILED tasks found"
-          echo ""
-          echo "===== WHAT WENT WRONG ====="
-          sed -n '/What went wrong/,/Try:/p' /tmp/full_build.log || echo "No 'What went wrong' section found"
-          echo ""
-          echo "===== ERRORS ====="
-          grep -i "error:" /tmp/full_build.log | grep -v "Caching disabled" | head -30 || echo "No error: lines found"
-          echo ""
-          echo "===== FAILURE BLOCK ====="
-          grep -B 2 -A 30 "FAILURE: Build failed" /tmp/full_build.log || echo "No FAILURE block found"
-          echo ""
-          echo "===== LAST 50 LINES (filtered) ====="
-          grep -v "Caching disabled" /tmp/full_build.log | tail -50
+
+          if [ ! -f "$LOG_FILE" ]; then
+            echo "Build log not found at $LOG_FILE"
+            echo ""
+            echo "===== /tmp DIRECTORY SNAPSHOT ====="
+            ls -lah /tmp | head -100
+          else
+            echo "Build log: $LOG_FILE"
+            echo "Log lines: $(wc -l < \"$LOG_FILE\")"
+            echo ""
+
+            echo "===== FAILED TASKS ====="
+            grep -E "FAILED$|^> Task .* FAILED$" "$LOG_FILE" || echo "No FAILED tasks found"
+            echo ""
+
+            echo "===== WHAT WENT WRONG ====="
+            sed -n '/What went wrong/,/Try:/p' "$LOG_FILE" || echo "No 'What went wrong' section found"
+            echo ""
+
+            echo "===== ERRORS ====="
+            grep -i "error:" "$LOG_FILE" | grep -v "Caching disabled" | head -30 || echo "No error: lines found"
+            echo ""
+
+            echo "===== FAILURE BLOCK ====="
+            grep -B 2 -A 30 "FAILURE: Build failed" "$LOG_FILE" || echo "No FAILURE block found"
+            echo ""
+
+            echo "===== LAST 120 LINES ====="
+            tail -120 "$LOG_FILE" || echo "Unable to tail build log"
+          fi
+
           echo "##[endgroup]"
           exit 1
 
-      - name: Upload build log on failure
-        if: steps.build.outcome == 'failure'
+      - name: Upload build log artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-failure-log
           path: /tmp/full_build.log
           retention-days: 7
+          if-no-files-found: warn
 
       - name: Upload APK artifact
         if: steps.build.outcome == 'success'
